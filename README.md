@@ -168,4 +168,6 @@ Aufbau:
   sonst den Build ab; hier wird die Vorgabe auf eine Mindestversion gelockert
 - `hm-module.nix`: Home-Manager-Modul
 
-Dieses Projekt ist kein offizielles Produkt von Proton AG.
+## Lizenz
+
+[MIT](LICENSE). Dieses Projekt ist kein offizielles Produkt von Proton AG.

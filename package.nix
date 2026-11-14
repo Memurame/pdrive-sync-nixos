@@ -56,6 +56,8 @@ stdenvNoCC.mkDerivation {
   meta = {
     description = "Two-way sync agent between local folders and Proton Drive";
     mainProgram = "proton-drive-sync";
+    license = lib.licenses.mit;
+    homepage = "https://github.com/Memurame/protondrive-sync-nixos";
     platforms = lib.platforms.linux;
   };
 }
