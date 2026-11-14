@@ -147,8 +147,12 @@ class Proton:
                     return out
             err = (proc.stderr.strip() or out or f"exit {proc.returncode}").splitlines()[-1]
             code = classify_error(proc.stderr + "\n" + out)
-            if code == EXIT_NETWORK and attempt + 1 < retries:
-                warn(f"Netzwerk/Rate-Limit ({err}); neuer Versuch in {delay}s")
+            if code in (EXIT_NETWORK, EXIT_AUTH) and attempt + 1 < retries:
+                # "need to login" also shows up when the keyring entry is briefly
+                # unreadable (e.g. while the previous call rewrites the rotated
+                # session) – so retry before treating it as logged out.
+                reason = "Netzwerk/Rate-Limit" if code == EXIT_NETWORK else "Sitzung nicht lesbar"
+                warn(f"{reason} ({err}); neuer Versuch in {delay}s")
                 time.sleep(delay)
                 delay *= 3
                 continue
@@ -484,7 +488,10 @@ class Syncer:
         for rel in sorted(set(local_files) | set(remote_files) | set(old)):
             l, r, s = local_files.get(rel), remote_files.get(rel), old.get(rel)
             l_changed = l is not None and (s is None or l != s["local"])
-            r_changed = r is not None and (s is None or r.fp != s["remote_fp"])
+            # remote_fp None = we uploaded it but never learned the new revision
+            # (run was interrupted); an unchanged local file means remote is ours.
+            r_changed = r is not None and (s is None or (s["remote_fp"] is not None
+                                                        and r.fp != s["remote_fp"]))
             if rel in remote_dirs and l is not None or rel in local_dirs and r is not None:
                 warn(f"{rel}: Datei auf der einen, Ordner auf der anderen Seite – übersprungen")
                 continue
@@ -521,7 +528,7 @@ class Syncer:
         new_files: dict[str, dict] = {}
         touched_remote: set[str] = set()
         ok = True
-        for action, rel in plan:
+        for i, (action, rel) in enumerate(plan):
             try:
                 kept = self.apply(action, rel, local_files, remote_files, remote_dirs,
                                   touched_remote)
@@ -529,6 +536,18 @@ class Syncer:
                     new_files[rel] = kept
             except (ProtonError, OSError) as e:
                 if isinstance(e, ProtonError) and e.code == EXIT_AUTH:
+                    # Keep what was already done, so the next run does not have to
+                    # re-check every transferred file.
+                    for _, rest in plan[i:]:
+                        if rest in old:
+                            new_files[rest] = old[rest]
+                    if not self.dry_run:
+                        try:
+                            self.refresh_remote_fps(new_files, touched_remote)
+                        except ProtonError:
+                            pass  # fingerprints stay unknown (None) – handled next run
+                        self.state.files = new_files
+                        self.state.save()
                     raise
                 warn(f"{rel}: {e}")
                 self.stats["error"] += 1
@@ -556,7 +575,7 @@ class Syncer:
     def apply(self, action, rel, local_files, remote_files, remote_dirs, touched_remote):
         """Execute one plan step; return the new state entry or None to drop it."""
         if action == "noop":
-            return self.state.files[rel]
+            return {"local": self.state.files[rel]["local"], "remote_fp": remote_files[rel].fp}
         if action == "forget":
             return None
         if action == "up":
