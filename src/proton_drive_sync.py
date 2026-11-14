@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 STATE_VERSION = 1
+CHECKPOINT_SECONDS = 20  # save progress at least this often during a long run
 # Replaced with the package version at build time (package.nix); "dev" when run from source.
 __version__ = "@VERSION@"
 VERSION = "dev" if __version__.startswith("@") else __version__
@@ -531,26 +533,45 @@ class Syncer:
         new_files: dict[str, dict] = {}
         touched_remote: set[str] = set()
         ok = True
+
+        def checkpoint(next_index: int, refresh: bool = False) -> None:
+            """Persist progress so an interrupted run does not start over.
+
+            Done items get their new entry, items not processed yet keep their
+            old one. Uploaded files whose new remote revision is not known yet
+            are stored with remote_fp None (treated as in sync next run).
+            """
+            if self.dry_run:
+                return
+            files = dict(new_files)
+            for _, rest in plan[next_index:]:
+                if rest in old and rest not in files:
+                    files[rest] = old[rest]
+            if refresh:
+                try:
+                    self.refresh_remote_fps(files, touched_remote)
+                except ProtonError:
+                    pass
+            files.update(getattr(self, "_extra", {}))
+            self.state.files = files
+            self.state.save()
+
+        last_save = time.monotonic()
         for i, (action, rel) in enumerate(plan):
             try:
                 kept = self.apply(action, rel, local_files, remote_files, remote_dirs,
                                   touched_remote)
                 if kept:
                     new_files[rel] = kept
+                if action != "noop" and time.monotonic() - last_save > CHECKPOINT_SECONDS:
+                    checkpoint(i + 1)
+                    last_save = time.monotonic()
+            except (KeyboardInterrupt, SystemExit):
+                checkpoint(i)  # stopped (e.g. systemctl stop / restart on rebuild)
+                raise
             except (ProtonError, OSError) as e:
                 if isinstance(e, ProtonError) and e.code == EXIT_AUTH:
-                    # Keep what was already done, so the next run does not have to
-                    # re-check every transferred file.
-                    for _, rest in plan[i:]:
-                        if rest in old:
-                            new_files[rest] = old[rest]
-                    if not self.dry_run:
-                        try:
-                            self.refresh_remote_fps(new_files, touched_remote)
-                        except ProtonError:
-                            pass  # fingerprints stay unknown (None) – handled next run
-                        self.state.files = new_files
-                        self.state.save()
+                    checkpoint(i, refresh=True)
                     raise
                 warn(f"{rel}: {e}")
                 self.stats["error"] += 1
@@ -844,6 +865,9 @@ def main(argv: list[str] | None = None) -> int:
     rs = sub.add_parser("reset", help="gespeicherten Sync-Zustand eines Ordners vergessen")
     rs.add_argument("folder")
     args = ap.parse_args(argv)
+    # systemd stops the agent with SIGTERM: turn it into SystemExit so running
+    # syncs can save their progress before exiting.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
     if args.cmd == "config":
         if not open_wizard(args.config):
