@@ -72,7 +72,7 @@ proton-drive-cli.overrideAttrs (old: {
 
   meta = old.meta // {
     description = "Two-way sync agent between local folders and Proton Drive (unofficial, uses the Proton Drive SDK)";
-    homepage = "https://github.com/Memurame/pdrive-sync";
+    homepage = "https://github.com/Memurame/pdrive-sync-nixos";
     license = lib.licenses.mit;
     mainProgram = "pdrive-sync";
     platforms = lib.platforms.linux;

@@ -41,7 +41,7 @@ Geschrieben in TypeScript für [Bun](https://bun.sh), direkt auf Protons offizie
 ```nix
 # flake.nix deiner NixOS-Konfiguration
 inputs.pdrive-sync = {
-  url = "github:Memurame/pdrive-sync";
+  url = "github:Memurame/pdrive-sync-nixos";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 
@@ -128,9 +128,9 @@ Temporäre Dateien (`*.part`, `*.tmp`, `*.swp`, `*~`, `.~lock.*#`, `~$*`, `.DS_S
 
 ## Umstieg von 0.6 (Umbenennung in pdrive-sync)
 
-Ab 0.7 heißen Programm, Repo, Dienst und Option **pdrive-sync** (ohne Proton-Marke im Namen).
+Ab 0.7 heißen Programm, Dienst und Option **pdrive-sync**, das Repo **pdrive-sync-nixos** (ohne Proton-Marke im Namen).
 
-- **Flake:** `url = "github:Memurame/pdrive-sync";`. Die alte Repo-Adresse leitet GitHub weiter.
+- **Flake:** `url = "github:Memurame/pdrive-sync-nixos";`. Die alte Repo-Adresse leitet GitHub weiter.
 - **Home Manager:** `services.proton-drive-sync` funktioniert weiter. Home Manager weist auf den neuen Namen `services.pdrive-sync` hin.
 - **Programm:** `pdrive-sync` statt `proton-drive-sync`. Der Dienst heißt jetzt `pdrive-sync.service`.
 - **Automatische Übernahme beim ersten Start:** Verzeichnisse (`~/.local/state`, `~/.local/share`, `~/.cache`), eine selbst angelegte
