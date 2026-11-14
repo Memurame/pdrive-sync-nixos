@@ -1,4 +1,4 @@
-"""Einrichtungsassistent für proton-drive-sync (GTK4 + libadwaita).
+"""Einstellungen / Einrichtung für proton-drive-sync (GTK4 + libadwaita).
 
 Wird von proton_drive_sync.py geladen, wenn keine Konfiguration existiert oder
 `proton-drive-sync config` aufgerufen wird. Schreibt die JSON-Konfiguration,
@@ -22,7 +22,8 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 APP_ID = "io.github.protondrivesync.Settings"
 STORES = [("keychain", "Schlüsselbund (GNOME Keyring, KWallet)"), ("pass", "pass (password-store)")]
-DEFAULTS = {"debounce": 5, "remotePoll": 60, "maxDeletes": 50, "exclude": [".git", "node_modules"]}
+DEFAULTS = {"debounce": 5, "remotePoll": 60, "maxDeletes": 50, "exclude": [".git", "node_modules"],
+            "trayIcon": True}
 
 
 def has_display() -> bool:
@@ -165,18 +166,17 @@ class FolderRow(Adw.ExpanderRow):
         self.win = win
         self.name = Adw.EntryRow(title="Name (eindeutig)")
         self.local = Adw.ActionRow(title="Lokaler Ordner", subtitle_selectable=True)
-        pick_local = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER,
-                                tooltip_text="Ordner auswählen", css_classes=["flat"])
+        pick_local = Gtk.Button(label="Wählen …", valign=Gtk.Align.CENTER,
+                                tooltip_text="Lokalen Ordner auswählen", css_classes=["flat"])
         pick_local.connect("clicked", self.pick_local)
         self.local.add_suffix(pick_local)
         self.remote = Adw.EntryRow(title="Ordner in Proton Drive")
-        pick_remote = Gtk.Button(icon_name="folder-remote-symbolic", valign=Gtk.Align.CENTER,
-                                 tooltip_text="In Proton Drive durchsuchen", css_classes=["flat"])
+        pick_remote = Gtk.Button(label="Durchsuchen …", valign=Gtk.Align.CENTER,
+                                 tooltip_text="Ordner in Proton Drive auswählen", css_classes=["flat"])
         pick_remote.connect("clicked", self.pick_remote)
         self.remote.add_suffix(pick_remote)
         self.exclude = Adw.EntryRow(title="Zusätzliche Ausnahmen (kommagetrennt, z. B. *.tmp, Cache)")
-        remove = Adw.ButtonRow(title="Ordner entfernen", start_icon_name="user-trash-symbolic",
-                               css_classes=["destructive-action"])
+        remove = Adw.ButtonRow(title="Ordner entfernen", css_classes=["destructive-action"])
         remove.connect("activated", lambda *_: self.win.remove_folder(self))
         for r in (self.name, self.local, self.remote, self.exclude, remove):
             self.add_row(r)
@@ -235,71 +235,58 @@ class FolderRow(Adw.ExpanderRow):
 # --------------------------------------------------------------------------- #
 
 class Wizard(Adw.ApplicationWindow):
+    """All settings on one page (also used for the first setup)."""
+
     def __init__(self, app, config_path: Path, cfg: dict, managed: bool, on_saved, version: str = "dev"):
-        super().__init__(application=app, title="Proton Drive Sync", default_width=640, default_height=720)
+        super().__init__(application=app, title="Proton Drive Sync – Einstellungen",
+                         default_width=680, default_height=860)
         self.config_path, self.cfg, self.managed, self.on_saved = config_path, cfg, managed, on_saved
         self.version = version
+        self.first_run = not config_path.exists()
         self.cli = ProtonCli(cfg.get("protonBin") or "proton-drive")
         self.cli.store = cfg.get("credentialsStore")
         self.folder_rows: list[FolderRow] = []
 
-        self.toasts = Adw.ToastOverlay()
-        self.nav = Adw.NavigationView()
-        self.toasts.set_child(self.nav)
+        tv = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        self.save_btn = Gtk.Button(label="Speichern und starten" if self.first_run else "Speichern",
+                                   css_classes=["suggested-action"], sensitive=not managed)
+        self.save_btn.connect("clicked", self.save)
+        header.pack_end(self.save_btn)
+        tv.add_top_bar(header)
+        if managed:
+            tv.add_top_bar(Adw.Banner(
+                title="Diese Konfiguration wird von Home Manager verwaltet – bitte in home.nix ändern.",
+                revealed=True))
+
+        page = Adw.PreferencesPage()
+        if self.first_run:
+            page.add(Adw.PreferencesGroup(
+                title="Willkommen",
+                description="Proton Drive Sync hält lokale Ordner und Proton Drive in beide Richtungen "
+                            "synchron. Melde dich an, wähle die Ordner und speichere – der Abgleich "
+                            "startet danach automatisch."))
+        page.add(self.group_account())
+        page.add(self.group_folders())
+        for g in self.groups_settings():
+            page.add(g)
+        tv.set_content(page)
+
+        self.toasts = Adw.ToastOverlay(child=tv)
         self.set_content(self.toasts)
-
-        self.nav.add(self.page_account())
-        self.folders_page = self.page_folders()
-        self.settings_page = self.page_settings()
         self.check_login()
-
-    # -- helpers ------------------------------------------------------------ #
 
     def toast(self, text: str):
         self.toasts.add_toast(Adw.Toast(title=text, timeout=4))
 
-    def make_page(self, title: str, tag: str, content: Gtk.Widget, button: str, on_click,
-                  step: str) -> Adw.NavigationPage:
-        tv = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        header.pack_end(Gtk.Label(label=step, css_classes=["dim-label", "caption"]))
-        tv.add_top_bar(header)
-        if self.managed:
-            tv.add_top_bar(Adw.Banner(
-                title="Diese Konfiguration wird von Home Manager verwaltet – bitte in home.nix ändern.",
-                revealed=True))
-        tv.set_content(content)
-        btn = Gtk.Button(label=button, css_classes=["suggested-action", "pill"],
-                         halign=Gtk.Align.CENTER, margin_top=12, margin_bottom=12)
-        btn.connect("clicked", on_click)
-        if self.managed and tag == "settings":
-            btn.set_sensitive(False)
-        tv.add_bottom_bar(btn)
-        return Adw.NavigationPage(title=title, tag=tag, child=tv)
+    # -- account -------------------------------------------------------------- #
 
-    # -- page 1: account ------------------------------------------------------ #
-
-    def page_account(self) -> Adw.NavigationPage:
-        page = Adw.PreferencesPage()
-        intro = Adw.PreferencesGroup()
-        intro.add(Adw.StatusPage(
-            icon_name="folder-remote-symbolic", title="Proton Drive Sync",
-            description="Hält lokale Ordner und Proton Drive in beide Richtungen synchron. "
-                        "Melde dich zuerst bei Proton an."))
-        intro.add(Gtk.Label(label=f"Version {self.version}", css_classes=["dim-label", "caption"]))
-        page.add(intro)
-
+    def group_account(self) -> Adw.PreferencesGroup:
         group = Adw.PreferencesGroup(title="Konto")
-        self.store_row = Adw.ComboRow(title="Anmeldedaten speichern in",
-                                      model=Gtk.StringList.new([label for _, label in STORES]))
-        current = self.cfg.get("credentialsStore") or "keychain"
-        self.store_row.set_selected(next((i for i, (k, _) in enumerate(STORES) if k == current), 0))
-        self.store_row.connect("notify::selected", lambda *_: self.store_changed())
-        group.add(self.store_row)
-
-        self.login_row = Adw.ActionRow(title="Status", subtitle="Wird geprüft …")
+        self.login_row = Adw.ActionRow(title="Proton-Anmeldung", subtitle="Wird geprüft …")
         self.login_spinner = Adw.Spinner(valign=Gtk.Align.CENTER)
-        self.login_btn = Gtk.Button(label="Anmelden", valign=Gtk.Align.CENTER, visible=False)
+        self.login_btn = Gtk.Button(label="Anmelden", valign=Gtk.Align.CENTER, visible=False,
+                                    css_classes=["suggested-action"])
         self.login_btn.connect("clicked", self.login)
         self.login_row.add_suffix(self.login_spinner)
         self.login_row.add_suffix(self.login_btn)
@@ -307,16 +294,20 @@ class Wizard(Adw.ApplicationWindow):
 
         self.url_row = Adw.ActionRow(title="Anmelde-Link", subtitle_selectable=True, visible=False,
                                      subtitle_lines=2)
-        open_btn = Gtk.Button(icon_name="web-browser-symbolic", valign=Gtk.Align.CENTER,
+        open_btn = Gtk.Button(label="Öffnen", valign=Gtk.Align.CENTER,
                               tooltip_text="Im Browser öffnen", css_classes=["flat"])
         open_btn.connect("clicked", lambda *_: Gtk.UriLauncher.new(self.url_row.get_subtitle())
                          .launch(self, None, None, None))
         self.url_row.add_suffix(open_btn)
         group.add(self.url_row)
-        page.add(group)
 
-        return self.make_page("Anmeldung", "account", page, "Weiter",
-                              lambda *_: self.nav.push(self.folders_page), "Schritt 1 von 3")
+        self.store_row = Adw.ComboRow(title="Anmeldedaten speichern in",
+                                      model=Gtk.StringList.new([label for _, label in STORES]))
+        current = self.cfg.get("credentialsStore") or "keychain"
+        self.store_row.set_selected(next((i for i, (k, _) in enumerate(STORES) if k == current), 0))
+        self.store_row.connect("notify::selected", lambda *_: self.store_changed())
+        group.add(self.store_row)
+        return group
 
     def store_changed(self):
         self.cli.store = STORES[self.store_row.get_selected()][0]
@@ -357,14 +348,13 @@ class Wizard(Adw.ApplicationWindow):
         run_async(work, lambda code, err: self.check_login() if not err and code == 0
                   else (self.toast("Anmeldung fehlgeschlagen"), self.check_login()))
 
-    # -- page 2: folders ------------------------------------------------------ #
+    # -- folders -------------------------------------------------------------- #
 
-    def page_folders(self) -> Adw.NavigationPage:
-        page = Adw.PreferencesPage()
+    def group_folders(self) -> Adw.PreferencesGroup:
         self.folder_group = Adw.PreferencesGroup(
             title="Synchronisierte Ordner",
             description="Jeder lokale Ordner wird mit einem Ordner in Proton Drive abgeglichen. "
-                        "Existiert der Ordner in Proton Drive noch nicht, wird er angelegt.")
+                        "„/“ steht für dein ganzes Proton Drive. Fehlende Ordner werden angelegt.")
         add = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER,
                          tooltip_text="Ordner hinzufügen", css_classes=["flat"])
         add.connect("clicked", lambda *_: self.add_folder({}, expanded=True))
@@ -372,10 +362,9 @@ class Wizard(Adw.ApplicationWindow):
         self.empty_row = Adw.ActionRow(title="Noch keine Ordner",
                                        subtitle="Mit + einen Ordner hinzufügen")
         self.folder_group.add(self.empty_row)
-        page.add(self.folder_group)
         for f in self.cfg.get("folders", []):
             self.add_folder(f)
-        return self.make_page("Ordner", "folders", page, "Weiter", self.to_settings, "Schritt 2 von 3")
+        return self.folder_group
 
     def add_folder(self, data: dict, expanded: bool = False):
         row = FolderRow(self, data)
@@ -415,16 +404,9 @@ class Wizard(Adw.ApplicationWindow):
                     return f"„{a['name']}“ und „{b['name']}“ überschneiden sich lokal."
         return None
 
-    def to_settings(self, *_):
-        if err := self.validate_folders():
-            self.toast(err)
-            return
-        self.nav.push(self.settings_page)
+    # -- behaviour ------------------------------------------------------------ #
 
-    # -- page 3: settings ----------------------------------------------------- #
-
-    def page_settings(self) -> Adw.NavigationPage:
-        page = Adw.PreferencesPage()
+    def groups_settings(self) -> list[Adw.PreferencesGroup]:
         timing = Adw.PreferencesGroup(title="Zeitverhalten")
         self.debounce = Adw.SpinRow.new_with_range(1, 300, 1)
         self.debounce.set_title("Verzögerung nach lokalen Änderungen")
@@ -436,7 +418,6 @@ class Wizard(Adw.ApplicationWindow):
         self.poll.set_value(self.cfg.get("remotePoll", DEFAULTS["remotePoll"]))
         timing.add(self.debounce)
         timing.add(self.poll)
-        page.add(timing)
 
         safety = Adw.PreferencesGroup(title="Sicherheit und Ausnahmen")
         self.max_deletes = Adw.SpinRow.new_with_range(1, 100000, 10)
@@ -447,14 +428,22 @@ class Wizard(Adw.ApplicationWindow):
         self.exclude.set_text(", ".join(self.cfg.get("exclude", DEFAULTS["exclude"])))
         safety.add(self.max_deletes)
         safety.add(self.exclude)
-        page.add(safety)
+
+        look = Adw.PreferencesGroup(title="Darstellung")
+        self.tray = Adw.SwitchRow(
+            title="Symbol in der Taskleiste",
+            subtitle="Zeigt Status und letzte Änderungen. Unter GNOME wird die Erweiterung "
+                     "„AppIndicator“ benötigt.")
+        self.tray.set_active(self.cfg.get("trayIcon", DEFAULTS["trayIcon"]))
+        look.add(self.tray)
 
         info = Adw.PreferencesGroup()
         info.add(Adw.ActionRow(title="Konfigurationsdatei", subtitle=str(self.config_path),
                                subtitle_selectable=True))
-        page.add(info)
-        return self.make_page("Einstellungen", "settings", page, "Speichern und starten", self.save,
-                              "Schritt 3 von 3")
+        info.add(Adw.ActionRow(title="Version", subtitle=self.version))
+        return [timing, safety, look, info]
+
+    # -- save ----------------------------------------------------------------- #
 
     def save(self, *_):
         if err := self.validate_folders():
@@ -467,6 +456,7 @@ class Wizard(Adw.ApplicationWindow):
             "remotePoll": int(self.poll.get_value()),
             "maxDeletes": int(self.max_deletes.get_value()),
             "exclude": split_list(self.exclude.get_text()),
+            "trayIcon": self.tray.get_active(),
             "folders": [r.to_dict() for r in self.folder_rows],
         })
         try:

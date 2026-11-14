@@ -379,6 +379,12 @@ class Syncer:
         self.dry_run = dry_run
         self.excluded = Excluder(DEFAULT_EXCLUDES + pair.exclude)
         self.stats = {"up": 0, "down": 0, "del_remote": 0, "del_local": 0, "conflict": 0, "error": 0}
+        self.activity: Activity | None = None
+
+    def report(self, action: str, rel: str, message: str | None = None) -> None:
+        """Record a change for the tray / activity window."""
+        if self.activity and not self.dry_run:
+            self.activity.event(self.pair.name, action, rel, str(self.lpath(rel)), message)
 
     def local_dirty(self) -> bool:
         """True if the local tree differs from what the last sync left behind.
@@ -420,6 +426,7 @@ class Syncer:
         log(f"  upload  ↑     {rel}")
         self.proton.upload(self.lpath(rel), self.rparent(rel))
         self.stats["up"] += 1
+        self.report("up", rel)
 
     def download(self, rel: str) -> None:
         log(f"  download ↓    {rel}")
@@ -437,6 +444,7 @@ class Syncer:
             if os.path.exists(tmp):
                 os.unlink(tmp)
         self.stats["down"] += 1
+        self.report("down", rel)
 
     def trash_local(self, rel: str) -> None:
         log(f"  delete local  {rel}  (→ {self.trash_dir})")
@@ -449,11 +457,13 @@ class Syncer:
         if dest.exists():
             dest = dest.with_name(f"{dest.name}.{int(time.time())}")
         shutil.move(str(src), str(dest))
+        self.report("del_local", rel, f"verschoben nach {dest}")
 
     def trash_remote(self, rel: str) -> None:
         log(f"  delete remote {rel}  (→ Proton-Papierkorb)")
         self.proton.trash(self.rpath(rel))
         self.stats["del_remote"] += 1
+        self.report("del_remote", rel, "im Proton-Papierkorb")
 
     def same_content(self, rel: str) -> bool:
         """Download the remote copy to a temp file and compare it byte-for-byte."""
@@ -575,6 +585,7 @@ class Syncer:
                     raise
                 warn(f"{rel}: {e}")
                 self.stats["error"] += 1
+                self.report("error", rel, str(e))
                 ok = False
                 if rel in old:
                     new_files[rel] = old[rel]  # keep previous knowledge, retry next run
@@ -630,6 +641,7 @@ class Syncer:
             cname = conflict_name(rel)
             log(f"  KONFLIKT      {rel}  → lokale Version als {cname}")
             self.stats["conflict"] += 1
+            self.report("conflict", rel, f"lokale Version gespeichert als {PurePosixPath(cname).name}")
             if not self.dry_run:
                 os.rename(self.lpath(rel), self.lpath(cname))
             self.download(rel)
@@ -723,9 +735,35 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
+def has_display() -> bool:
+    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
+def state_dir_for(config_path: Path) -> Path:
+    try:
+        cfg = load_config(config_path)
+    except (OSError, ValueError):
+        cfg = {}
+    return Path(cfg.get("stateDir") or xdg("XDG_STATE_HOME", "~/.local/state") / "proton-drive-sync")
+
+
+def open_activity(config_path: Path, tray: bool) -> int:
+    """Activity window (status) or tray icon + window (tray)."""
+    if not has_display():
+        warn("Kein Bildschirm gefunden (WAYLAND_DISPLAY/DISPLAY).")
+        return 1
+    try:
+        from proton_drive_sync_tray import run_activity
+    except ImportError as e:
+        warn(f"GUI nicht verfügbar ({e}).")
+        return 1
+    return run_activity(config_path, state_dir_for(config_path), os.path.abspath(__file__),
+                        VERSION, tray=tray)
+
+
 def open_wizard(config_path: Path) -> bool:
     """Show the GTK setup wizard. Returns True if a config was saved."""
-    if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
+    if not has_display():
         warn("Kein Bildschirm gefunden (WAYLAND_DISPLAY/DISPLAY) – der Assistent braucht eine "
              "grafische Sitzung. Alternativ die Konfiguration per Home Manager setzen.")
         return False
@@ -753,25 +791,109 @@ def restart_agent() -> None:
 AUTH_HINT = "Nicht angemeldet / Sitzung abgelaufen. Bitte `proton-drive auth login` ausführen."
 
 
-def sync_pair(make_syncer, pair: Pair) -> bool:
+class Activity:
+    """Status and change log for the tray icon / activity window.
+
+    status.json   – current state of the agent and of every folder
+    activity.jsonl – one JSON object per change (newest last, trimmed)
+    """
+    MAX_EVENTS = 500
+
+    def __init__(self, state_dir: Path):
+        self.status_path = state_dir / "status.json"
+        self.log_path = state_dir / "activity.jsonl"
+        self.data: dict = {"version": VERSION, "pid": os.getpid(), "state": "starting",
+                           "message": None, "folder": None, "folders": {}}
+        try:  # keep per-folder history (last sync time etc.) across restarts
+            old = json.loads(self.status_path.read_text())
+            self.data["folders"] = old.get("folders", {})
+        except (OSError, ValueError):
+            pass
+        self.trim()
+        self.save()
+
+    def save(self) -> None:
+        self.data["updated"] = time.time()
+        tmp = self.status_path.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps(self.data, ensure_ascii=False))
+            os.replace(tmp, self.status_path)
+        except OSError:
+            pass
+
+    def set(self, state: str, message: str | None = None, folder: str | None = None) -> None:
+        self.data.update(state=state, message=message, folder=folder)
+        self.save()
+
+    def folder_update(self, name: str, **kw) -> None:
+        self.data["folders"].setdefault(name, {}).update(kw)
+        self.save()
+
+    def overall(self) -> None:
+        """Agent is waiting: idle, or error if the last run of a folder failed."""
+        bad = [n for n, f in self.data["folders"].items() if f.get("state") == "error"]
+        self.set("error" if bad else "idle",
+                 f"Fehler in: {', '.join(bad)}" if bad else None)
+
+    def event(self, folder: str, action: str, rel: str, local: str, message: str | None = None) -> None:
+        line = json.dumps({"time": time.time(), "folder": folder, "action": action, "path": rel,
+                           "local": local, "message": message}, ensure_ascii=False)
+        try:
+            with open(self.log_path, "a") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+    def trim(self) -> None:
+        try:
+            lines = self.log_path.read_text().splitlines()
+        except OSError:
+            return
+        if len(lines) > self.MAX_EVENTS:
+            tmp = self.log_path.with_suffix(".tmp")
+            tmp.write_text("\n".join(lines[-self.MAX_EVENTS:]) + "\n")
+            os.replace(tmp, self.log_path)
+
+
+def sync_pair(make_syncer, pair: Pair, activity: Activity | None = None) -> bool:
     """One sync run for one folder; errors are logged, auth errors re-raised."""
+    syncer = make_syncer(pair)
+    syncer.activity = activity
+    if activity:
+        activity.set("syncing", folder=pair.name)
+        activity.folder_update(pair.name, state="syncing", local=str(pair.local),
+                               remote=pair.remote, started=time.time())
+    ok, message = False, None
     try:
-        return make_syncer(pair).run()
+        ok = syncer.run()
+        if not ok:
+            message = f"{syncer.stats['error']} Fehler – Details im Log"
+        return ok
     except ProtonError as e:
         warn(str(e))
+        message = str(e)
         if e.code == EXIT_AUTH:
+            if activity:
+                activity.folder_update(pair.name, state="auth", message=AUTH_HINT)
+                activity.set("auth", AUTH_HINT)
             raise
         return False
     except OSError as e:
         warn(f"{pair.name}: {e}")
+        message = str(e)
         return False
+    finally:
+        if activity and activity.data["state"] != "auth":
+            activity.folder_update(pair.name, state="ok" if ok else "error", message=message,
+                                   last_sync=time.time(), stats=syncer.stats)
 
 
 # --------------------------------------------------------------------------- #
 # watch mode
 # --------------------------------------------------------------------------- #
 
-def watch(pairs: list[Pair], make_syncer, debounce: float, poll: float) -> int:
+def watch(pairs: list[Pair], make_syncer, debounce: float, poll: float,
+          activity: Activity | None = None, tray_cmd: list[str] | None = None) -> int:
     """Long-running agent: local changes are synced `debounce` seconds after the
     last filesystem event, remote changes are picked up every `poll` seconds."""
     import queue
@@ -793,12 +915,38 @@ def watch(pairs: list[Pair], make_syncer, debounce: float, poll: float) -> int:
         events.put(None)  # inotifywait ended
 
     threading.Thread(target=reader, daemon=True).start()
+
+    tray = None
+    if tray_cmd:
+        try:
+            tray = subprocess.Popen(tray_cmd)
+        except OSError as e:
+            warn(f"Taskleisten-Symbol konnte nicht gestartet werden: {e}")
+    try:
+        return _watch_loop(pairs, make_syncer, debounce, poll, events, activity)
+    finally:
+        if activity:
+            activity.set("stopped")
+        if tray and tray.poll() is None:
+            tray.terminate()
+        proc.terminate()
+
+
+def _watch_loop(pairs, make_syncer, debounce, poll, events, activity) -> int:
+    import queue
     log(f"proton-drive-sync {VERSION} – Überwache {len(pairs)} Ordner (Verzögerung {debounce:g}s, Remote-Abfrage alle {poll:g}s)")
 
     excluders = {p.name: Excluder(DEFAULT_EXCLUDES + p.exclude) for p in pairs}
     dirty: dict[str, float] = {}          # pair name -> time of last local event
     next_poll = {p.name: 0.0 for p in pairs}  # 0 = sync right away on start
     backoff = poll
+
+    def sync_now(*_):  # SIGUSR1, sent by the tray's "Jetzt synchronisieren"
+        for name in next_poll:
+            next_poll[name] = 0.0
+    signal.signal(signal.SIGUSR1, sync_now)
+    if activity:
+        activity.overall()
 
     def pair_for(path: str) -> tuple[Pair, str] | None:
         for p in pairs:
@@ -810,7 +958,8 @@ def watch(pairs: list[Pair], make_syncer, debounce: float, poll: float) -> int:
     while True:
         now = time.monotonic()
         due = [t + debounce for t in dirty.values()] + list(next_poll.values())
-        timeout = max(0.0, min(due) - now) if due else poll
+        # wake up at least every second so SIGUSR1 (sync now) is handled promptly
+        timeout = min(1.0, max(0.0, min(due) - now) if due else poll)
         try:
             path = events.get(timeout=timeout)
             if path is None:
@@ -833,8 +982,11 @@ def watch(pairs: list[Pair], make_syncer, debounce: float, poll: float) -> int:
             if local_due and not poll_due and not make_syncer(p).local_dirty():
                 continue  # only our own writes / nothing real changed
             try:
-                sync_pair(make_syncer, p)
+                sync_pair(make_syncer, p, activity)
                 backoff = poll
+                if activity:
+                    activity.overall()
+                    activity.trim()
             except ProtonError:  # auth
                 warn(AUTH_HINT)
                 backoff = min(backoff * 2, 3600)
@@ -861,6 +1013,8 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--poll", type=float, help="Sekunden zwischen zwei Remote-Abfragen")
     w.add_argument("--folder", action="append", help="nur diesen Ordner (Name) überwachen")
     sub.add_parser("config", help="Einrichtungsassistent (GUI) öffnen")
+    sub.add_parser("status", help="Aktivitätsfenster (GUI) öffnen")
+    sub.add_parser("tray", help="Taskleisten-Symbol starten (startet sonst der Agent selbst)")
     sub.add_parser("folders", help="konfigurierte Ordner anzeigen")
     rs = sub.add_parser("reset", help="gespeicherten Sync-Zustand eines Ordners vergessen")
     rs.add_argument("folder")
@@ -874,6 +1028,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         restart_agent()
         return 0
+
+    if args.cmd in ("status", "tray"):
+        return open_activity(args.config, tray=args.cmd == "tray")
 
     if not args.config.exists():
         if args.cmd != "watch":
@@ -929,21 +1086,30 @@ def main(argv: list[str] | None = None) -> int:
         return Syncer(pair, proton, state_dir, trash_dir,
                       int(cfg.get("maxDeletes", 50)), force, dry_run)
 
+    activity = None if dry_run else Activity(state_dir)
+
     if args.cmd == "watch":
         debounce = args.debounce if args.debounce is not None else float(cfg.get("debounce", 5))
         poll = args.poll if args.poll is not None else float(cfg.get("remotePoll", 60))
+        tray_cmd = None
+        if cfg.get("trayIcon", True) and has_display():
+            tray_cmd = [sys.executable, os.path.abspath(__file__), "--config", str(args.config), "tray"]
         try:
-            return watch(pairs, make_syncer, debounce, poll)
+            return watch(pairs, make_syncer, debounce, poll, activity, tray_cmd)
         except KeyboardInterrupt:
             return 0
 
     ok = True
-    for pair in pairs:
-        try:
-            ok &= sync_pair(make_syncer, pair)
-        except ProtonError:
-            warn(AUTH_HINT)
-            return EXIT_AUTH
+    try:
+        for pair in pairs:
+            ok &= sync_pair(make_syncer, pair, activity)
+    except ProtonError:
+        warn(AUTH_HINT)
+        return EXIT_AUTH
+    finally:
+        if activity:
+            activity.overall()
+            activity.set("stopped")
     return 0 if ok else 1
 
 

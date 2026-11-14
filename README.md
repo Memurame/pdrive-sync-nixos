@@ -15,8 +15,10 @@ Alle Zugriffe auf Proton laufen über das **offizielle** [Proton Drive CLI](http
 - **Remote-Abfrage:** Proton liefert dem CLI keine Benachrichtigungen. Der Agent fragt Proton Drive deshalb alle 60 Sekunden ab (`remotePoll`).
 - **Echter Zwei-Wege-Abgleich:** Jeder Lauf vergleicht lokal, remote und den Stand nach dem letzten Lauf. So ist klar, auf welcher
   Seite sich etwas geändert hat.
-- **Grafischer Einrichtungsassistent** (GTK4/libadwaita): Anmeldung, Ordnerauswahl (lokal und in Proton Drive), Einstellungen.
-  Alternativ lässt sich alles deklarativ in Nix festlegen.
+- **Taskleisten-Symbol und Übersicht** (optional): Das Symbol zeigt den Status. Sein Menü bietet „Aktivität anzeigen“, „Jetzt synchronisieren“
+  und „Einstellungen“. Die Übersicht zeigt jeden Ordner und die letzten Änderungen (hoch- und heruntergeladen, gelöscht, Konflikte, Fehler).
+- **Einstellungen auf einer Seite** (GTK4/libadwaita): Anmeldung, Ordnerauswahl (lokal und in Proton Drive), Zeitverhalten, Ausnahmen,
+  Taskleisten-Symbol. Alternativ lässt sich alles deklarativ in Nix festlegen.
 - **Sicherheitsnetz:** Löschungen landen im Proton-Papierkorb bzw. in einem lokalen Papierkorb. Ein Lösch-Limit pro Lauf verhindert,
   dass z. B. ein nicht eingehängtes Laufwerk alles remote löscht.
 
@@ -51,21 +53,25 @@ outputs = { self, nixpkgs, home-manager, proton-drive-sync, ... }: {
 };
 ```
 
-### Variante A: Einrichtung per Assistent
+### Variante A: Einrichtung per Einstellungsfenster
 
 ```nix
 # home.nix
 services.proton-drive-sync.enable = true;
 ```
 
-Nach `nixos-rebuild switch` startet der Agent mit der grafischen Sitzung. Findet er keine Konfiguration, öffnet sich der Assistent:
+Nach `nixos-rebuild switch` startet der Agent mit der grafischen Sitzung. Findet er keine Konfiguration, öffnen sich die Einstellungen.
+Alles steht auf einer Seite:
 
-1. **Anmeldung:** Status prüfen, „Anmelden“ öffnet den Proton-Login im Browser. Wähle außerdem, wo die Sitzung gespeichert wird (Schlüsselbund oder `pass`).
-2. **Ordner:** lokalen Ordner auswählen und den Zielordner in Proton Drive durchsuchen oder eintippen. Fehlende Remote-Ordner werden angelegt.
-3. **Einstellungen:** Verzögerung, Abfrageintervall, Lösch-Limit, Ausnahmen.
+- **Konto:** Anmeldestatus. „Anmelden“ öffnet den Proton-Login im Browser. Wähle außerdem, wo die Sitzung gespeichert wird (Schlüsselbund oder `pass`).
+- **Ordner:** lokalen Ordner auswählen und den Zielordner in Proton Drive durchsuchen oder eintippen. Fehlende Remote-Ordner werden angelegt.
+- **Zeitverhalten, Sicherheit, Ausnahmen:** Verzögerung, Abfrageintervall, Lösch-Limit.
+- **Darstellung:** Symbol in der Taskleiste ein oder aus.
 
-Die Einstellungen landen in `~/.config/proton-drive-sync/config.json`. Später öffnest du den Assistenten mit `proton-drive-sync config`
-oder über **Proton Drive Sync** im App-Menü. Nach dem Speichern startet der Agent neu.
+Die Einstellungen landen in `~/.config/proton-drive-sync/config.json`. Nach dem Speichern startet der Agent neu.
+
+**Proton Drive Sync** im App-Menü öffnet die Übersicht mit Status und letzten Änderungen. Von dort (Zahnrad) oder über
+`proton-drive-sync config` erreichst du die Einstellungen.
 
 ### Variante B: deklarativ in Nix
 
@@ -85,7 +91,7 @@ services.proton-drive-sync = {
 };
 ```
 
-Sind `folders` gesetzt, verwaltet Home Manager die Konfiguration. Der Assistent zeigt sie dann nur an.
+Sind `folders` gesetzt, verwaltet Home Manager die Konfiguration. Das Einstellungsfenster zeigt sie dann nur an.
 Remote-Pfade sind relativ zu „Meine Dateien“: `/Dokumente` entspricht `/my-files/Dokumente`.
 Mit `remote = "/"` wird das ganze Proton Drive synchronisiert. „Für mich freigegeben“ und Geräte gehören nicht dazu.
 Ordner dürfen sich nicht überschneiden, also z. B. nicht `/` und zusätzlich `/Dokumente`.
@@ -101,7 +107,7 @@ proton-drive auth login
 - **Anmeldung:** Das offizielle CLI speichert die Sitzung im **Secret Service** (GNOME Keyring, KWallet, …) oder in
   [`pass`](https://www.passwordstore.org/). Der Speicher muss entsperrt sein, solange der Agent läuft.
   Unter Fenstermanagern wie Hyprland oder Sway z. B. `services.gnome-keyring.enable = true;` setzen.
-- **Grafische Sitzung:** Für den Assistenten braucht der Dienst `WAYLAND_DISPLAY`/`DISPLAY`. Das HM-Modul für Hyprland, Sway und GNOME
+- **Grafische Sitzung:** Für Einstellungsfenster und Taskleisten-Symbol braucht der Dienst `WAYLAND_DISPLAY`/`DISPLAY`. Das HM-Modul für Hyprland, Sway und GNOME
   importiert diese Variablen standardmäßig in die systemd-User-Umgebung.
 
 ## Optionen
@@ -117,6 +123,7 @@ proton-drive auth login
 | `maxDeletes` | `50` | maximale Löschungen pro Lauf und Ordner |
 | `exclude` | `[ ".git" "node_modules" ]` | Glob-Muster (Name oder relativer Pfad), die nie synchronisiert werden |
 | `credentialsStore` | `null` (Schlüsselbund) | `"keychain"` oder `"pass"` |
+| `trayIcon` | `true` | Symbol in der Taskleiste (StatusNotifierItem). Unter GNOME ist die Erweiterung „AppIndicator“ nötig |
 | `package` / `protonPackage` | aus diesem Flake | eigene Pakete |
 
 Temporäre Dateien (`*.part`, `*.tmp`, `*.swp`, `*~`, `.~lock.*#`, `~$*`, `.DS_Store`, `Thumbs.db`) werden immer ignoriert.
@@ -126,7 +133,9 @@ Temporäre Dateien (`*.part`, `*.tmp`, `*.swp`, `*~`, `.~lock.*#`, `~$*`, `.DS_S
 ```text
 proton-drive-sync watch  [--debounce S] [--poll S] [--folder NAME]…   Agent (so läuft der Dienst)
 proton-drive-sync run    [-n|--dry-run] [--force] [--folder NAME]…    einmaliger Lauf
-proton-drive-sync config                                              Einrichtungsassistent öffnen
+proton-drive-sync config                                              Einstellungen öffnen
+proton-drive-sync status                                              Übersicht (Status, letzte Änderungen) öffnen
+proton-drive-sync tray                                                Taskleisten-Symbol (startet sonst der Agent selbst)
 proton-drive-sync folders                                             Ordner und ihr Stand
 proton-drive-sync reset NAME                                          gespeicherten Stand vergessen
 proton-drive-sync --version                                           installierte Version anzeigen
@@ -141,6 +150,7 @@ proton-drive-sync --version                                           installier
 | Konfiguration | `~/.config/proton-drive-sync/config.json` |
 | Logs des Agenten | `journalctl --user -u proton-drive-sync -f` |
 | Stand pro Ordner | `~/.local/state/proton-drive-sync/<name>.json` |
+| Status / letzte Änderungen (für Symbol und Übersicht) | `~/.local/state/proton-drive-sync/status.json`, `activity.jsonl` |
 | lokaler Papierkorb | `~/.local/share/proton-drive-sync/trash/` |
 | Log des Proton CLI | `~/.local/state/proton-drive-cli/proton-drive.log` |
 | Cache / App-Daten des Proton CLI | `~/.cache/proton-drive-cli/`, `~/.local/share/proton-drive-cli/` |
@@ -158,14 +168,16 @@ proton-drive-sync --version                                           installier
 ```sh
 nix build                              # Paket bauen
 nix run . -- --config test.json run -n # Probelauf mit eigener Konfiguration
-nix run . -- config                    # Assistent starten
+nix run . -- config                    # Einstellungen öffnen
+nix run . -- status                    # Übersicht öffnen
 nix run .#proton-drive -- auth login   # offizielles CLI direkt
 ```
 
 Aufbau:
 
 - `src/proton_drive_sync.py`: Sync-Logik, Agent und CLI (nur Python-Standardbibliothek)
-- `src/proton_drive_sync_gui.py`: Einrichtungsassistent (PyGObject, GTK4, libadwaita)
+- `src/proton_drive_sync_gui.py`: Einstellungen (PyGObject, GTK4, libadwaita)
+- `src/proton_drive_sync_tray.py`: Taskleisten-Symbol (StatusNotifierItem/DBusMenu über Gio) und Übersicht
 - `package.nix`: Paket. `inotify-tools` und das Proton CLI sind im `PATH` enthalten
 - `nix/proton-drive-cli.nix`: `proton-drive-cli` aus nixpkgs. Ältere nixpkgs-Stände legen die Bun-Version exakt fest und brechen
   sonst den Build ab; hier wird die Vorgabe auf eine Mindestversion gelockert

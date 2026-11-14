@@ -17,7 +17,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "proton-drive-sync";
-  version = "0.4.4";
+  version = "0.5.0";
   src = ./src;
 
   nativeBuildInputs = [ makeWrapper wrapGAppsHook4 gobject-introspection ];
@@ -30,6 +30,7 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     install -Dm644 proton_drive_sync.py     $out/lib/proton-drive-sync/proton_drive_sync.py
     install -Dm644 proton_drive_sync_gui.py $out/lib/proton-drive-sync/proton_drive_sync_gui.py
+    install -Dm644 proton_drive_sync_tray.py $out/lib/proton-drive-sync/proton_drive_sync_tray.py
     substituteInPlace $out/lib/proton-drive-sync/proton_drive_sync.py \
       --replace-fail '__version__ = "@VERSION@"' "__version__ = \"$version\""
 
@@ -37,11 +38,17 @@ stdenvNoCC.mkDerivation {
     [Desktop Entry]
     Type=Application
     Name=Proton Drive Sync
-    Comment=Ordner mit Proton Drive synchronisieren – Einstellungen
-    Exec=$out/bin/proton-drive-sync config
+    Comment=Ordner mit Proton Drive synchronisieren – Status und letzte Änderungen
+    Exec=$out/bin/proton-drive-sync status
     Icon=folder-remote
     Terminal=false
-    Categories=Network;FileTransfer;Settings;
+    Categories=Network;FileTransfer;
+    StartupWMClass=io.github.protondrivesync.Activity
+    Actions=settings;
+
+    [Desktop Action settings]
+    Name=Einstellungen
+    Exec=$out/bin/proton-drive-sync config
     DESKTOP
     runHook postInstall
   '';

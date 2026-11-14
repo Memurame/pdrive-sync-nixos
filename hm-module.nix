@@ -33,6 +33,7 @@ let
     maxDeletes = cfg.maxDeletes;
     debounce = cfg.debounce;
     remotePoll = cfg.remotePoll;
+    trayIcon = cfg.trayIcon;
     exclude = cfg.exclude;
     folders = lib.mapAttrsToList (name: f: { inherit name; inherit (f) local remote exclude; }) cfg.folders;
   });
@@ -66,6 +67,15 @@ in
       description = ''
         Sekunden zwischen zwei Abfragen von Proton Drive. Remote-Änderungen kommen
         nicht als Ereignis an, sondern werden in diesem Abstand abgefragt.
+      '';
+    };
+
+    trayIcon = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Symbol in der Taskleiste (StatusNotifierItem) mit Status, letzten Änderungen und Menü.
+        Unter GNOME wird die Erweiterung „AppIndicator“ benötigt.
       '';
     };
 
