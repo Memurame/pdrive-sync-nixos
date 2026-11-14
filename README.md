@@ -129,6 +129,7 @@ proton-drive-sync run    [-n|--dry-run] [--force] [--folder NAME]…    einmalig
 proton-drive-sync config                                              Einrichtungsassistent öffnen
 proton-drive-sync folders                                             Ordner und ihr Stand
 proton-drive-sync reset NAME                                          gespeicherten Stand vergessen
+proton-drive-sync --version                                           installierte Version anzeigen
 ```
 
 `run` beendet sich, solange der Agent läuft. Alle Befehle akzeptieren `--config PFAD`.

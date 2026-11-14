@@ -235,9 +235,10 @@ class FolderRow(Adw.ExpanderRow):
 # --------------------------------------------------------------------------- #
 
 class Wizard(Adw.ApplicationWindow):
-    def __init__(self, app, config_path: Path, cfg: dict, managed: bool, on_saved):
+    def __init__(self, app, config_path: Path, cfg: dict, managed: bool, on_saved, version: str = "dev"):
         super().__init__(application=app, title="Proton Drive Sync", default_width=640, default_height=720)
         self.config_path, self.cfg, self.managed, self.on_saved = config_path, cfg, managed, on_saved
+        self.version = version
         self.cli = ProtonCli(cfg.get("protonBin") or "proton-drive")
         self.cli.store = cfg.get("credentialsStore")
         self.folder_rows: list[FolderRow] = []
@@ -285,6 +286,7 @@ class Wizard(Adw.ApplicationWindow):
             icon_name="folder-remote-symbolic", title="Proton Drive Sync",
             description="Hält lokale Ordner und Proton Drive in beide Richtungen synchron. "
                         "Melde dich zuerst bei Proton an."))
+        intro.add(Gtk.Label(label=f"Version {self.version}", css_classes=["dim-label", "caption"]))
         page.add(intro)
 
         group = Adw.PreferencesGroup(title="Konto")
@@ -479,7 +481,7 @@ class Wizard(Adw.ApplicationWindow):
         self.close()
 
 
-def run_wizard(config_path: Path, proton_bin: str | None = None) -> dict | None:
+def run_wizard(config_path: Path, proton_bin: str | None = None, version: str = "dev") -> dict | None:
     """Open the wizard; return the saved config, or None if it was closed without saving."""
     cfg: dict = {}
     if config_path.exists():
@@ -493,6 +495,6 @@ def run_wizard(config_path: Path, proton_bin: str | None = None) -> dict | None:
     result: dict = {}
 
     app = Adw.Application(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
-    app.connect("activate", lambda a: Wizard(a, config_path, cfg, managed, result.update).present())
+    app.connect("activate", lambda a: Wizard(a, config_path, cfg, managed, result.update, version).present())
     app.run([])
     return result or None

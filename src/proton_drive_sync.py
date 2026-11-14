@@ -25,6 +25,9 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 STATE_VERSION = 1
+# Replaced with the package version at build time (package.nix); "dev" when run from source.
+__version__ = "@VERSION@"
+VERSION = "dev" if __version__.startswith("@") else __version__
 DEFAULT_EXCLUDES = [
     ".proton-sync-*",
     "*.part",
@@ -710,7 +713,7 @@ def open_wizard(config_path: Path) -> bool:
     except ImportError as e:
         warn(f"GUI nicht verfügbar ({e}).")
         return False
-    return run_wizard(config_path) is not None
+    return run_wizard(config_path, version=VERSION) is not None
 
 
 def restart_agent() -> None:
@@ -769,7 +772,7 @@ def watch(pairs: list[Pair], make_syncer, debounce: float, poll: float) -> int:
         events.put(None)  # inotifywait ended
 
     threading.Thread(target=reader, daemon=True).start()
-    log(f"Überwache {len(pairs)} Ordner (Verzögerung {debounce:g}s, Remote-Abfrage alle {poll:g}s)")
+    log(f"proton-drive-sync {VERSION} – Überwache {len(pairs)} Ordner (Verzögerung {debounce:g}s, Remote-Abfrage alle {poll:g}s)")
 
     excluders = {p.name: Excluder(DEFAULT_EXCLUDES + p.exclude) for p in pairs}
     dirty: dict[str, float] = {}          # pair name -> time of last local event
@@ -824,6 +827,7 @@ def watch(pairs: list[Pair], make_syncer, debounce: float, poll: float) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="proton-drive-sync",
                                  description="Zwei-Wege-Sync zwischen lokalen Ordnern und Proton Drive")
+    ap.add_argument("-V", "--version", action="version", version=f"%(prog)s {VERSION}")
     ap.add_argument("--config", type=Path,
                     default=xdg("XDG_CONFIG_HOME", "~/.config") / "proton-drive-sync" / "config.json")
     sub = ap.add_subparsers(dest="cmd", required=True)

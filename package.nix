@@ -17,7 +17,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "proton-drive-sync";
-  version = "0.4.2";
+  version = "0.4.3";
   src = ./src;
 
   nativeBuildInputs = [ makeWrapper wrapGAppsHook4 gobject-introspection ];
@@ -30,6 +30,8 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     install -Dm644 proton_drive_sync.py     $out/lib/proton-drive-sync/proton_drive_sync.py
     install -Dm644 proton_drive_sync_gui.py $out/lib/proton-drive-sync/proton_drive_sync_gui.py
+    substituteInPlace $out/lib/proton-drive-sync/proton_drive_sync.py \
+      --replace-fail '__version__ = "@VERSION@"' "__version__ = \"$version\""
 
     install -Dm644 /dev/stdin $out/share/applications/proton-drive-sync.desktop <<DESKTOP
     [Desktop Entry]
