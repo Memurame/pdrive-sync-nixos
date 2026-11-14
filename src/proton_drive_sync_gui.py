@@ -400,8 +400,17 @@ class Wizard(Adw.ApplicationWindow):
             names.add(d["name"])
             if not d["local"]:
                 return f"{d['name']}: kein lokaler Ordner gewählt."
-            if d["remote"] == "/":
-                return f"{d['name']}: bitte einen Unterordner in Proton Drive wählen, nicht die Wurzel."
+        # overlapping folders would sync the same files twice
+        def inside(a: str, b: str) -> bool:
+            a, b = a.rstrip("/") + "/", b.rstrip("/") + "/"
+            return a.startswith(b) or b.startswith(a)
+        items = [r.to_dict() for r in self.folder_rows]
+        for i, a in enumerate(items):
+            for b in items[i + 1:]:
+                if inside(a["remote"], b["remote"]):
+                    return f"„{a['name']}“ und „{b['name']}“ überschneiden sich in Proton Drive."
+                if inside(os.path.expanduser(a["local"]), os.path.expanduser(b["local"])):
+                    return f"„{a['name']}“ und „{b['name']}“ überschneiden sich lokal."
         return None
 
     def to_settings(self, *_):

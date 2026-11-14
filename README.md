@@ -87,6 +87,8 @@ services.proton-drive-sync = {
 
 Sind `folders` gesetzt, verwaltet Home Manager die Konfiguration. Der Assistent zeigt sie dann nur an.
 Remote-Pfade sind relativ zu „Meine Dateien“: `/Dokumente` entspricht `/my-files/Dokumente`.
+Mit `remote = "/"` wird das ganze Proton Drive synchronisiert. „Für mich freigegeben“ und Geräte gehören nicht dazu.
+Ordner dürfen sich nicht überschneiden, also z. B. nicht `/` und zusätzlich `/Dokumente`.
 
 Einmalig anmelden:
 
