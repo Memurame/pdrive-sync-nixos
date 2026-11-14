@@ -8,7 +8,8 @@ import { joinRel } from './util';
 
 /** Always ignored: our temp files, editor swap/lock files, OS metadata. */
 export const DEFAULT_EXCLUDES = [
-    '.proton-sync-*',
+    '.pdrive-sync-*',
+    '.proton-sync-*', // temp files of versions < 0.7
     '*.part',
     '*.tmp',
     '*.swp',

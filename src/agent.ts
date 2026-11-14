@@ -192,7 +192,7 @@ export async function runAgent(ctx: AgentContext, folders: FolderConfig[]): Prom
     };
 
     log(
-        `proton-drive-sync ${VERSION} – überwache ${folders.length} Ordner ` +
+        `pdrive-sync ${VERSION} – überwache ${folders.length} Ordner ` +
             `(Verzögerung ${settings.debounce}s, Remote über Drive-Events, voller Abgleich alle ${settings.fullScanHours} h)`,
     );
     activity.settle();
@@ -256,8 +256,8 @@ export async function runAgent(ctx: AgentContext, folders: FolderConfig[]): Prom
                         return true;
                     }
                     if (error instanceof AuthError) {
-                        warn(`Nicht angemeldet / Sitzung abgelaufen – \`proton-drive-sync login\` ausführen. (${error.message})`);
-                        activity.set('auth', 'Nicht angemeldet – `proton-drive-sync login` ausführen');
+                        warn(`Nicht angemeldet / Sitzung abgelaufen – \`pdrive-sync login\` ausführen. (${error.message})`);
+                        activity.set('auth', 'Nicht angemeldet – `pdrive-sync login` ausführen');
                         authBackoffUntil = Date.now() + authBackoff;
                         authBackoff = Math.min(authBackoff * 2, 3600_000);
                         return false;
@@ -297,7 +297,7 @@ export async function runOne(syncer: Syncer, ctx: { activity?: Activity }, f: Fo
     try {
         ok = await syncer.run();
         if (!ok) {
-            message = syncer.stats.error ? `${syncer.stats.error} Fehler – Details mit \`proton-drive-sync log\`` : 'übersprungen – siehe Log';
+            message = syncer.stats.error ? `${syncer.stats.error} Fehler – Details mit \`pdrive-sync log\`` : 'übersprungen – siehe Log';
         }
         return ok;
     } catch (error) {

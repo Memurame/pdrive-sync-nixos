@@ -72,7 +72,7 @@ function intIn(v: string, min: number, max: number): number {
 }
 
 export function defaultConfigPath(): string {
-    return process.env.PROTON_DRIVE_SYNC_CONFIG || path.join(xdg('XDG_CONFIG_HOME', '.config'), 'proton-drive-sync', 'config.json');
+    return process.env.PDRIVE_SYNC_CONFIG || path.join(xdg('XDG_CONFIG_HOME', '.config'), 'pdrive-sync', 'config.json');
 }
 
 export function loadSettings(file: string): Settings {
@@ -107,7 +107,7 @@ export function isManaged(file: string): boolean {
 export function saveSettings(file: string, settings: Settings): void {
     if (isManaged(file)) {
         throw new Error(
-            `${file} wird von Home Manager verwaltet – bitte in home.nix (services.proton-drive-sync) ändern.`,
+            `${file} wird von Home Manager verwaltet – bitte in home.nix (services.pdrive-sync) ändern.`,
         );
     }
     mkdirSync(path.dirname(file), { recursive: true });
@@ -117,13 +117,13 @@ export function saveSettings(file: string, settings: Settings): void {
 }
 
 export function stateDirOf(settings: Settings): string {
-    return settings.stateDir ? expandHome(settings.stateDir) : path.join(xdg('XDG_STATE_HOME', '.local/state'), 'proton-drive-sync');
+    return settings.stateDir ? expandHome(settings.stateDir) : path.join(xdg('XDG_STATE_HOME', '.local/state'), 'pdrive-sync');
 }
 
 export function trashDirOf(settings: Settings): string {
     return settings.trashDir
         ? expandHome(settings.trashDir)
-        : path.join(xdg('XDG_DATA_HOME', '.local/share'), 'proton-drive-sync', 'trash');
+        : path.join(xdg('XDG_DATA_HOME', '.local/share'), 'pdrive-sync', 'trash');
 }
 
 /** Validation for a new/changed folder list; returns an error message or null. */

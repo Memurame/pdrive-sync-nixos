@@ -160,7 +160,7 @@ export class Syncer {
         if (deletes > this.opts.maxDeletes && !this.opts.force) {
             warn(
                 `${f.name}: ${deletes} Löschungen geplant (Limit ${this.opts.maxDeletes}). Abbruch zum Schutz – ` +
-                    'prüfe mit `proton-drive-sync sync --dry-run` und starte ggf. mit --force.',
+                    'prüfe mit `pdrive-sync sync --dry-run` und starte ggf. mit --force.',
             );
             return false;
         }
@@ -335,7 +335,7 @@ export class Syncer {
         if (r.sha1) {
             return localSha1 === r.sha1;
         }
-        const tmp = path.join(path.dirname(this.lpath(rel)), `.proton-sync-cmp-${process.pid}`);
+        const tmp = path.join(path.dirname(this.lpath(rel)), `.pdrive-sync-cmp-${process.pid}`);
         try {
             await this.remote.download(r.rev!, tmp);
             return (await sha1File(tmp)) === localSha1;

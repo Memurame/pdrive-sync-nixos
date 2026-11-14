@@ -1,5 +1,5 @@
 {
-  description = "Zwei-Wege-Sync-Agent für Proton Drive (inoffiziell, auf Protons Drive-SDK)";
+  description = "pdrive-sync – inoffizieller Zwei-Wege-Sync-Agent für Proton Drive (auf Protons Drive-SDK)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,15 +17,15 @@
     in
     {
       packages = forAll (system: rec {
-        proton-drive-sync = nixpkgs-sdk.legacyPackages.${system}.callPackage ./package.nix { };
-        default = proton-drive-sync;
+        pdrive-sync = nixpkgs-sdk.legacyPackages.${system}.callPackage ./package.nix { };
+        default = pdrive-sync;
       });
 
       overlays.default = final: _prev: {
-        proton-drive-sync = self.packages.${final.stdenv.hostPlatform.system}.default;
+        pdrive-sync = self.packages.${final.stdenv.hostPlatform.system}.default;
       };
 
       homeManagerModules.default = import ./hm-module.nix self;
-      homeManagerModules.proton-drive-sync = self.homeManagerModules.default;
+      homeManagerModules.pdrive-sync = self.homeManagerModules.default;
     };
 }

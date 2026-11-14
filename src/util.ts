@@ -4,8 +4,8 @@ import path from 'node:path';
 declare const APP_VERSION: string | undefined;
 declare const SDK_VERSION: string | undefined;
 
-/** e.g. "external-drive-proton_drive_sync@0.6.0-beta" (set by the build) */
-export const APP_VERSION_STRING: string = typeof APP_VERSION !== 'undefined' ? APP_VERSION : 'external-drive-proton_drive_sync@0.0.0-dev';
+/** e.g. "external-drive-pdrive_sync@0.6.0-beta" (set by the build) */
+export const APP_VERSION_STRING: string = typeof APP_VERSION !== 'undefined' ? APP_VERSION : 'external-drive-pdrive_sync@0.0.0-dev';
 export const SDK_VERSION_STRING: string | undefined = typeof SDK_VERSION !== 'undefined' ? SDK_VERSION : undefined;
 /** Plain version number, e.g. "0.6.0-beta". */
 export const VERSION = APP_VERSION_STRING.split('@')[1] ?? 'dev';

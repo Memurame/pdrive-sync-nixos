@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { openBrowserUrl } from '../cli/openBrowserUrl';
@@ -32,14 +32,15 @@ import {
     tildify,
     VERSION,
     warn,
+    xdg,
 } from './util';
 
-const SERVICE = 'proton-drive-sync.service';
+const SERVICE = 'pdrive-sync.service';
 
-const HELP = `proton-drive-sync ${VERSION} – Zwei-Wege-Sync zwischen lokalen Ordnern und Proton Drive
+const HELP = `pdrive-sync ${VERSION} – Zwei-Wege-Sync zwischen lokalen Ordnern und Proton Drive
 (Drittanbieter-Programm, nicht offiziell von Proton unterstützt)
 
-Verwendung: proton-drive-sync [--config DATEI] [-v] <befehl> [optionen]
+Verwendung: pdrive-sync [--config DATEI] [-v] <befehl> [optionen]
 
 Anmeldung
   login                          im Browser bei Proton anmelden
@@ -136,13 +137,89 @@ class UsageError extends Error {}
 
 type Session = Awaited<ReturnType<typeof init>>;
 
+// --------------------------------------------------------------------------- //
+// migration from the old name "proton-drive-sync" (< 0.7)
+// --------------------------------------------------------------------------- //
+
+const OLD_NAME = 'proton-drive-sync';
+const NEW_NAME = 'pdrive-sync';
+const SESSION_ENTRY = 'auth-session';
+
+/** Move data directories and a self-managed config to the new name (once). */
+function migrateDirectories(): void {
+    // never pull the directories away from a still running old agent
+    const oldPid = path.join(xdg('XDG_STATE_HOME', '.local/state'), OLD_NAME, 'agent.pid');
+    try {
+        if (existsSync(oldPid) && isAlive(Number(readFileSync(oldPid, 'utf8')))) {
+            return;
+        }
+    } catch {}
+    for (const [variable, fallback] of [
+        ['XDG_STATE_HOME', '.local/state'],
+        ['XDG_DATA_HOME', '.local/share'],
+        ['XDG_CACHE_HOME', '.cache'],
+    ] as const) {
+        const base = xdg(variable, fallback);
+        const from = path.join(base, OLD_NAME);
+        const to = path.join(base, NEW_NAME);
+        if (existsSync(from) && !existsSync(to)) {
+            try {
+                renameSync(from, to);
+                log(`Übernommen: ${tildify(from)} → ${tildify(to)}`);
+            } catch (error) {
+                warn(`Konnte ${from} nicht übernehmen: ${errorMessage(error)}`);
+            }
+        }
+    }
+    // a config written by the CLI (Home Manager's symlinks are handled by HM itself)
+    const configBase = xdg('XDG_CONFIG_HOME', '.config');
+    const oldConfig = path.join(configBase, OLD_NAME, 'config.json');
+    const newConfig = path.join(configBase, NEW_NAME, 'config.json');
+    try {
+        if (existsSync(oldConfig) && !lstatSync(oldConfig).isSymbolicLink() && !existsSync(newConfig)) {
+            mkdirSync(path.dirname(newConfig), { recursive: true });
+            renameSync(oldConfig, newConfig);
+            log(`Übernommen: ${tildify(oldConfig)} → ${tildify(newConfig)}`);
+        }
+    } catch (error) {
+        warn(`Konnte ${oldConfig} nicht übernehmen: ${errorMessage(error)}`);
+    }
+}
+
+/**
+ * Copy the stored session to the new keyring / pass entry, so no new login is
+ * needed. The old entry is left in place (a still running old agent keeps working).
+ */
+async function migrateSession(store: Settings['credentialsStore']): Promise<void> {
+    try {
+        if (store === 'pass') {
+            const has = (entry: string) => Bun.spawnSync(['pass', 'show', entry], { stdout: 'ignore', stderr: 'ignore' }).exitCode === 0;
+            if (!has(`${NEW_NAME}/${SESSION_ENTRY}`) && has(`${OLD_NAME}/${SESSION_ENTRY}`)) {
+                const old = Bun.spawnSync(['pass', 'show', `${OLD_NAME}/${SESSION_ENTRY}`]).stdout;
+                Bun.spawnSync(['pass', 'insert', '-f', '-m', `${NEW_NAME}/${SESSION_ENTRY}`], { stdin: old });
+            }
+            return;
+        }
+        if (await Bun.secrets.get({ service: NEW_NAME, name: SESSION_ENTRY })) {
+            return;
+        }
+        const old = await Bun.secrets.get({ service: OLD_NAME, name: SESSION_ENTRY });
+        if (old) {
+            await Bun.secrets.set({ service: NEW_NAME, name: SESSION_ENTRY, value: old });
+        }
+    } catch {
+        // keyring locked/unavailable: the session check afterwards reports it
+    }
+}
+
 async function openSession(settings: Settings, verbose: boolean): Promise<Session> {
+    await migrateSession(settings.credentialsStore);
     process.env.PROTON_DRIVE_CREDENTIALS_STORE = settings.credentialsStore;
     process.env.PROTON_DRIVE_LOG_LEVEL ??= verbose ? 'DEBUG' : 'INFO';
     return init({
         appVersion: APP_VERSION_STRING,
         sdkVersion: SDK_VERSION_STRING,
-        clientUidPrefix: 'proton-drive-sync',
+        clientUidPrefix: 'pdrive-sync',
         enablePersistedEvents: false, // we track event IDs ourselves
         enableConsoleLog: verbose,
         enableMetrics: false,
@@ -151,7 +228,7 @@ async function openSession(settings: Settings, verbose: boolean): Promise<Sessio
 
 function requireLogin(session: Session): void {
     if (!session.auth.isLoggedIn()) {
-        throw new AuthError('Nicht angemeldet. Bitte zuerst `proton-drive-sync login` ausführen.');
+        throw new AuthError('Nicht angemeldet. Bitte zuerst `pdrive-sync login` ausführen.');
     }
 }
 
@@ -223,7 +300,7 @@ function cmdFolder(file: string, settings: Settings, args: string[]): number {
     const [sub = 'list', ...rest] = args;
     if (sub === 'list') {
         if (!settings.folders.length) {
-            log('Keine Ordner konfiguriert. Hinzufügen mit: proton-drive-sync folder add NAME LOKAL REMOTE');
+            log('Keine Ordner konfiguriert. Hinzufügen mit: pdrive-sync folder add NAME LOKAL REMOTE');
             return 0;
         }
         const st = stateDirOf(settings);
@@ -240,7 +317,7 @@ function cmdFolder(file: string, settings: Settings, args: string[]): number {
         const { opts, positional } = takeOptions(rest, { '-e|--exclude': 'multi' });
         const [name, local, remote] = positional;
         if (!name || !local || !remote || positional.length > 3) {
-            throw new UsageError('Verwendung: proton-drive-sync folder add NAME LOKAL REMOTE [--exclude MUSTER]…');
+            throw new UsageError('Verwendung: pdrive-sync folder add NAME LOKAL REMOTE [--exclude MUSTER]…');
         }
         if (settings.folders.some((f) => f.name === name)) {
             throw new UsageError(`Es gibt bereits einen Ordner „${name}“.`);
@@ -266,7 +343,7 @@ function cmdFolder(file: string, settings: Settings, args: string[]): number {
         }
         saveSettings(file, { ...settings, folders: settings.folders.filter((f) => f.name !== name) });
         log(`Ordner „${name}“ entfernt. Lokale Dateien und Proton Drive bleiben unverändert.`);
-        log(`Gespeicherten Stand ebenfalls löschen: proton-drive-sync reset ${name}`);
+        log(`Gespeicherten Stand ebenfalls löschen: pdrive-sync reset ${name}`);
         return 0;
     }
     throw new UsageError(`Unbekannter Unterbefehl: folder ${sub}`);
@@ -293,7 +370,7 @@ function cmdConfig(file: string, settings: Settings, args: string[]): number {
     if (sub === 'set') {
         if (!key || !SETTABLE[key] || !values.length) {
             const list = Object.entries(SETTABLE).map(([k, v]) => `  ${k.padEnd(17)} ${v.help}`).join('\n');
-            throw new UsageError(`Verwendung: proton-drive-sync config set SCHLÜSSEL WERT\n${list}`);
+            throw new UsageError(`Verwendung: pdrive-sync config set SCHLÜSSEL WERT\n${list}`);
         }
         let value: unknown;
         try {
@@ -326,7 +403,7 @@ async function cmdStatus(settings: Settings, verbose: boolean): Promise<number> 
     let login = '?';
     try {
         const session = await openSession(settings, verbose);
-        login = session.auth.isLoggedIn() ? 'angemeldet' : 'nicht angemeldet – `proton-drive-sync login`';
+        login = session.auth.isLoggedIn() ? 'angemeldet' : 'nicht angemeldet – `pdrive-sync login`';
         await session.dispose();
     } catch (error) {
         login = `Sitzung nicht lesbar (${errorMessage(error)})`;
@@ -334,7 +411,7 @@ async function cmdStatus(settings: Settings, verbose: boolean): Promise<number> 
     log(`Anmeldung   ${login}`);
 
     if (!settings.folders.length) {
-        log('Ordner      keine – hinzufügen mit `proton-drive-sync folder add NAME LOKAL REMOTE`');
+        log('Ordner      keine – hinzufügen mit `pdrive-sync folder add NAME LOKAL REMOTE`');
         return 0;
     }
     log('Ordner');
@@ -414,7 +491,7 @@ async function cmdLog(settings: Settings, args: string[]): Promise<number> {
 function cmdReset(settings: Settings, args: string[]): number {
     const [name] = args;
     if (!name) {
-        throw new UsageError('Verwendung: proton-drive-sync reset NAME');
+        throw new UsageError('Verwendung: pdrive-sync reset NAME');
     }
     const file = stateFile(stateDirOf(settings), name);
     if (existsSync(file)) {
@@ -439,14 +516,14 @@ async function cmdSync(settings: Settings, args: string[], verbose: boolean): Pr
     const { opts } = takeOptions(args, { '-n|--dry-run': 'bool', '--force': 'bool', '--folder': 'multi' });
     const folders = selectFolders(settings, opts.folder as string[] | undefined);
     if (!folders.length) {
-        log('Keine Ordner konfiguriert – `proton-drive-sync folder add NAME LOKAL REMOTE`.');
+        log('Keine Ordner konfiguriert – `pdrive-sync folder add NAME LOKAL REMOTE`.');
         return 1;
     }
     const stateDir = stateDirOf(settings);
     const agent = runningAgentPid(stateDir);
     if (agent && !opts['dry-run']) {
         process.kill(agent, 'SIGUSR1');
-        log(`Der Agent läuft (PID ${agent}) – vollständiger Abgleich angestoßen. Verfolgen mit: proton-drive-sync log -f`);
+        log(`Der Agent läuft (PID ${agent}) – vollständiger Abgleich angestoßen. Verfolgen mit: pdrive-sync log -f`);
         return 0;
     }
     const session = await openSession(settings, verbose);
@@ -483,7 +560,7 @@ async function cmdSync(settings: Settings, args: string[], verbose: boolean): Pr
 async function cmdWatch(settings: Settings, verbose: boolean): Promise<number> {
     const stateDir = stateDirOf(settings);
     if (!settings.folders.length) {
-        log('Keine Ordner konfiguriert – Agent beendet. Hinzufügen mit: proton-drive-sync folder add NAME LOKAL REMOTE');
+        log('Keine Ordner konfiguriert – Agent beendet. Hinzufügen mit: pdrive-sync folder add NAME LOKAL REMOTE');
         return 0;
     }
     const other = runningAgentPid(stateDir);
@@ -520,6 +597,7 @@ async function cmdWatch(settings: Settings, verbose: boolean): Promise<number> {
 // --------------------------------------------------------------------------- //
 
 async function main(argv: string[]): Promise<number> {
+    migrateDirectories();
     const args = parseArgs(argv);
     const settings = loadSettings(args.config);
     const changesConfig = (args.cmd === 'folder' && ['add', 'remove', 'rm'].includes(args.rest[0] ?? '')) || (args.cmd === 'config' && args.rest[0] === 'set');
@@ -530,7 +608,7 @@ async function main(argv: string[]): Promise<number> {
             log(HELP);
             return 0;
         case 'version':
-            log(`proton-drive-sync ${VERSION} (${APP_VERSION_STRING}, SDK ${SDK_VERSION_STRING ?? '?'})`);
+            log(`pdrive-sync ${VERSION} (${APP_VERSION_STRING}, SDK ${SDK_VERSION_STRING ?? '?'})`);
             return 0;
         case 'login':
             return cmdLogin(args.config, settings, args.verbose);

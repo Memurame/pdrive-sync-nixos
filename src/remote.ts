@@ -239,7 +239,7 @@ export class Remote {
     /** Download a revision to exactly `dest` (temp file + verify SHA-1 + rename). */
     async download(revisionUid: string, dest: string, expectedSha1?: string): Promise<void> {
         await mkdir(path.dirname(dest), { recursive: true });
-        const tmp = path.join(path.dirname(dest), `.proton-sync-${process.pid}-${Date.now()}.part`);
+        const tmp = path.join(path.dirname(dest), `.pdrive-sync-${process.pid}-${Date.now()}.part`);
         const writer = Bun.file(tmp).writer();
         const stream = {
             getWriter: () => writer,
