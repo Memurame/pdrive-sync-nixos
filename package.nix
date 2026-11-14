@@ -24,8 +24,9 @@ proton-drive-cli.overrideAttrs (old: {
   inherit version;
   # same SDK source as proton-drive-cli; only our version number differs
   __intentionallyOverridingVersion = true;
-  # reuse the (binary-cached) node_modules of proton-drive-cli unchanged
-  passthru = old.passthru // { inherit (old.passthru) nodeModules; };
+  # reuse the (binary-cached) node_modules of proton-drive-cli unchanged –
+  # taken from the original package so name and hash stay identical
+  passthru = old.passthru // { inherit (proton-drive-cli.passthru) nodeModules; };
 
   nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ makeWrapper ];
 
