@@ -485,6 +485,15 @@ def run_wizard(config_path: Path, proton_bin: str | None = None, version: str = 
     result: dict = {}
 
     app = Adw.Application(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
-    app.connect("activate", lambda a: Wizard(a, config_path, cfg, managed, result.update, version).present())
+    def activate(a):
+        try:  # our own icon for the window (installed next to the program)
+            from proton_drive_sync_tray import add_icon_search_path
+            add_icon_search_path()
+        except ImportError:
+            pass
+        w = Wizard(a, config_path, cfg, managed, result.update, version)
+        w.set_icon_name("proton-drive-sync")
+        w.present()
+    app.connect("activate", activate)
     app.run([])
     return result or None

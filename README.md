@@ -178,6 +178,7 @@ Aufbau:
 - `src/proton_drive_sync.py`: Sync-Logik, Agent und CLI (nur Python-Standardbibliothek)
 - `src/proton_drive_sync_gui.py`: Einstellungen (PyGObject, GTK4, libadwaita)
 - `src/proton_drive_sync_tray.py`: Taskleisten-Symbol (StatusNotifierItem/DBusMenu über Gio) und Übersicht
+- `icons/`: eigene Symbole (Wolke, je Zustand). Beim Build in mehreren Größen gerendert, für die Taskleiste als Pixmap übertragen
 - `package.nix`: Paket. `inotify-tools` und das Proton CLI sind im `PATH` enthalten
 - `nix/proton-drive-cli.nix`: `proton-drive-cli` aus nixpkgs. Ältere nixpkgs-Stände legen die Bun-Version exakt fest und brechen
   sonst den Build ab; hier wird die Vorgabe auf eine Mindestversion gelockert

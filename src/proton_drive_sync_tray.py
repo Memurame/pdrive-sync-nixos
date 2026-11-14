@@ -19,7 +19,8 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
 APP_ID = "io.github.protondrivesync.Activity"
 SERVICE = "proton-drive-sync.service"
@@ -32,23 +33,74 @@ ACTIONS = {
     "conflict": ("dialog-warning-symbolic", "Konflikt"),
     "error": ("dialog-error-symbolic", "Fehler"),
 }
-# tray icons (full-colour names that exist in Adwaita, Breeze and hicolor based themes)
-TRAY_ICONS = {
-    "idle": "folder-remote",
-    "starting": "view-refresh",
-    "syncing": "view-refresh",
-    "error": "dialog-warning",
-    "auth": "dialog-warning",
-    "stopped": "folder-remote",
-}
+# our own icons (icons/*.svg, installed to share/icons/hicolor by package.nix)
+APP_ICON = "proton-drive-sync"
 STATE_ICONS = {
-    "idle": "emblem-ok-symbolic",
-    "starting": "view-refresh-symbolic",
-    "syncing": "view-refresh-symbolic",
-    "error": "dialog-warning-symbolic",
-    "auth": "dialog-password-symbolic",
-    "stopped": "media-playback-stop-symbolic",
+    "idle": "proton-drive-sync",
+    "starting": "proton-drive-sync-syncing",
+    "syncing": "proton-drive-sync-syncing",
+    "error": "proton-drive-sync-error",
+    "auth": "proton-drive-sync-error",
+    "stopped": "proton-drive-sync-stopped",
 }
+FALLBACK_ICON = "folder-remote"
+PIXMAP_SIZES = (16, 22, 24, 32, 48, 64)
+
+
+def icon_roots() -> list[Path]:
+    """share/icons of the installed package, or the repo's icons/ when run from source."""
+    here = Path(__file__).resolve().parent
+    return [here.parent.parent / "share" / "icons", here.parent / "icons"]
+
+
+def _pixbuf(name: str, size: int):
+    for root in icon_roots():
+        for f in (root / "hicolor" / f"{size}x{size}" / "apps" / f"{name}.png", root / f"{name}.svg",
+                  root / "hicolor" / "scalable" / "apps" / f"{name}.svg"):
+            if f.exists():
+                try:
+                    return GdkPixbuf.Pixbuf.new_from_file_at_size(str(f), size, size)
+                except GLib.Error:
+                    pass
+    return None
+
+
+_PIXMAPS: dict[str, list] = {}
+
+
+def pixmaps(name: str) -> list[tuple[int, int, bytes]]:
+    """Icon as StatusNotifierItem pixmaps (ARGB32, network byte order) in several sizes."""
+    if name in _PIXMAPS:
+        return _PIXMAPS[name]
+    out = []
+    for size in PIXMAP_SIZES:
+        pb = _pixbuf(name, size)
+        if pb is None:
+            continue
+        if not pb.get_has_alpha():
+            pb = pb.add_alpha(False, 0, 0, 0)
+        w, h, rs = pb.get_width(), pb.get_height(), pb.get_rowstride()
+        px = pb.get_pixels()
+        data = bytearray(w * h * 4)
+        for y in range(h):
+            row = px[y * rs: y * rs + w * 4]
+            o = y * w * 4
+            data[o + 0:o + w * 4:4] = row[3::4]  # A
+            data[o + 1:o + w * 4:4] = row[0::4]  # R
+            data[o + 2:o + w * 4:4] = row[1::4]  # G
+            data[o + 3:o + w * 4:4] = row[2::4]  # B
+        out.append((w, h, bytes(data)))
+    _PIXMAPS[name] = out
+    return out
+
+
+def add_icon_search_path() -> None:
+    display = Gdk.Display.get_default()
+    if display:
+        theme = Gtk.IconTheme.get_for_display(display)
+        for root in icon_roots():
+            if root.exists():
+                theme.add_search_path(str(root))
 
 
 def ago(ts: float | None) -> str:
@@ -147,6 +199,7 @@ SNI_XML = """
     <property name="Status" type="s" access="read"/>
     <property name="WindowId" type="i" access="read"/>
     <property name="IconName" type="s" access="read"/>
+    <property name="IconPixmap" type="a(iiay)" access="read"/>
     <property name="IconThemePath" type="s" access="read"/>
     <property name="OverlayIconName" type="s" access="read"/>
     <property name="AttentionIconName" type="s" access="read"/>
@@ -242,7 +295,7 @@ class TrayIcon:
         self.app = app
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         self.name = f"org.kde.StatusNotifierItem-{os.getpid()}-1"
-        self.icon = "folder-remote"
+        self.icon = STATE_ICONS["idle"]
         self.title = "Proton Drive Sync"
         self.detail = ""
         self.status_label = "Proton Drive Sync"
@@ -273,7 +326,7 @@ class TrayIcon:
 
     def update(self, st: dict):
         head, detail = summary(st)
-        icon = TRAY_ICONS.get(st.get("state"), "folder-remote")
+        icon = STATE_ICONS.get(st.get("state"), APP_ICON)
         if icon != self.icon:
             self.icon = icon
             self.emit(SNI_PATH, SNI_IFACE, "NewIcon")
@@ -309,11 +362,13 @@ class TrayIcon:
             "Title": GLib.Variant("s", self.title),
             "Status": GLib.Variant("s", "Active"),
             "WindowId": GLib.Variant("i", 0),
-            "IconName": GLib.Variant("s", self.icon),
+            # pixmaps work in every panel; the name is only a fallback without them
+            "IconName": GLib.Variant("s", "" if pixmaps(self.icon) else FALLBACK_ICON),
+            "IconPixmap": GLib.Variant("a(iiay)", pixmaps(self.icon)),
             "IconThemePath": GLib.Variant("s", ""),
             "OverlayIconName": GLib.Variant("s", ""),
             "AttentionIconName": GLib.Variant("s", ""),
-            "ToolTip": GLib.Variant("(sa(iiay)ss)", (self.icon, [], self.status_label, self.detail)),
+            "ToolTip": GLib.Variant("(sa(iiay)ss)", ("", pixmaps(self.icon), self.status_label, self.detail)),
             "ItemIsMenu": GLib.Variant("b", True),
             "Menu": GLib.Variant("o", MENU_PATH),
         }.get(prop)
@@ -377,7 +432,8 @@ class TrayIcon:
 
 class ActivityWindow(Adw.ApplicationWindow):
     def __init__(self, app: "ActivityApp"):
-        super().__init__(application=app, title="Proton Drive Sync", default_width=560, default_height=680)
+        super().__init__(application=app, title="Proton Drive Sync", default_width=560, default_height=680,
+                         icon_name=APP_ICON)
         self.app = app
         self.toasts = Adw.ToastOverlay()
         tv = Adw.ToolbarView()
@@ -419,7 +475,7 @@ class ActivityWindow(Adw.ApplicationWindow):
         head, detail = summary(st)
         self.status_row.set_title(GLib.markup_escape_text(head))
         self.status_row.set_subtitle(GLib.markup_escape_text(detail))
-        self.status_icon.set_from_icon_name(STATE_ICONS.get(st.get("state"), "folder-remote-symbolic"))
+        self.status_icon.set_from_icon_name(STATE_ICONS.get(st.get("state"), APP_ICON))
         self.sync_btn.set_tooltip_text("Jetzt synchronisieren" if st.get("alive") else "Agent starten")
 
         for r in self.folder_rows:
@@ -512,6 +568,7 @@ class ActivityApp(Adw.Application):
         self.connect("activate", self.on_activate)
 
     def on_activate(self, _app):
+        add_icon_search_path()
         if self.tray_mode and self.icon is None:
             self.hold()  # keep running without a window
             self.icon = TrayIcon(self)
