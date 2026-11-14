@@ -1,5 +1,5 @@
 {
-  description = "Intervall-basierter Zwei-Wege-Sync für Proton Drive (über das offizielle Proton Drive CLI)";
+  description = "Zwei-Wege-Sync-Agent für Proton Drive (inoffiziell, auf Protons Drive-SDK)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -11,7 +11,6 @@
     {
       packages = forAll (pkgs: rec {
         proton-drive-sync = pkgs.callPackage ./package.nix { };
-        proton-drive = pkgs.callPackage ./nix/proton-drive-cli.nix { };
         default = proton-drive-sync;
       });
 

@@ -1,86 +1,79 @@
+# proton-drive-sync: Bun/TypeScript-Agent direkt auf Protons Drive-SDK.
+#
+# Gebaut wird im Quellbaum des offiziellen Proton Drive CLI (ProtonDriveApps/sdk,
+# MIT), das nixpkgs bereits als `proton-drive-cli` paketiert – inklusive der
+# fest gehashten node_modules. Unser Code (./src) kommt nach cli/src/sync/ und
+# nutzt die Initialisierung des CLI (Anmeldung, HTTP, Krypto, Cache) mit:
+#   - eigener App-Kennung (x-pm-appversion: external-drive-proton_drive_sync@…),
+#   - eigenem Datenverzeichnis (~/.cache|.local/share|.local/state/proton-drive-sync),
+#   - eigenem Schlüsselbund-Eintrag (getrennte Sitzung vom offiziellen CLI).
 { lib
-, stdenvNoCC
-, python3
-, makeWrapper
-, wrapGAppsHook4
-, gobject-introspection
-, gtk4
-, libadwaita
-, callPackage
 , proton-drive-cli
 , inotify-tools
-, librsvg
+, makeWrapper
+, glib
+, libsecret
 }:
 
 let
-  protonDrive = callPackage ./nix/proton-drive-cli.nix { inherit proton-drive-cli; };
-  python = python3.withPackages (ps: [ ps.pygobject3 ]);
+  version = "0.6.0";
+  channel = "beta";
 in
-stdenvNoCC.mkDerivation {
+proton-drive-cli.overrideAttrs (old: {
   pname = "proton-drive-sync";
-  version = "0.5.1";
-  src = lib.fileset.toSource {
-    root = ./.;
-    fileset = lib.fileset.unions [ ./src ./icons ];
+  inherit version;
+  # same SDK source as proton-drive-cli; only our version number differs
+  __intentionallyOverridingVersion = true;
+  # reuse the (binary-cached) node_modules of proton-drive-cli unchanged
+  passthru = old.passthru // { inherit (old.passthru) nodeModules; };
+
+  nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ makeWrapper ];
+
+  postPatch = (old.postPatch or "") + ''
+    # Ältere nixpkgs: exakte Bun-Version in engines lockern (no-op bei neueren)
+    sed -i -E 's/"bun": "([0-9])/"bun": ">=\1/' package.json
+
+    # eigene Datenverzeichnisse und eigener Sitzungsspeicher
+    substituteInPlace src/config.ts \
+      --replace-fail "const APP_DIR_NAME = 'proton-drive-cli';" "const APP_DIR_NAME = 'proton-drive-sync';"
+    substituteInPlace src/credentials/constants.ts \
+      --replace-fail "'ch.proton.drive/drive-sdk-cli'" "'proton-drive-sync'"
+
+    mkdir -p src/sync
+    cp ${./src}/*.ts src/sync/
+  '';
+
+  env = old.env // {
+    CLI_APP_VERSION_NAME = "external-drive-proton_drive_sync";
+    CLI_VERSION = "${version}-${channel}";
   };
 
-  nativeBuildInputs = [ makeWrapper wrapGAppsHook4 gobject-introspection librsvg ];
-  buildInputs = [ gtk4 libadwaita ];
-  dontBuild = true;
-  # wrapGAppsHook4 only collects the GTK environment; we apply it in our own wrapper.
-  dontWrapGApps = true;
+  buildPhase = ''
+    runHook preBuild
+    CLI_OUTPUT_DIR=release bun ./scripts/build-cli.mjs src/sync/main.ts
+    runHook postBuild
+  '';
 
   installPhase = ''
     runHook preInstall
-    for f in proton_drive_sync proton_drive_sync_gui proton_drive_sync_tray; do
-      install -Dm644 src/$f.py $out/lib/proton-drive-sync/$f.py
-    done
-
-    # icons: SVG for themes/menus, pre-rendered PNGs for the tray (IconPixmap)
-    for svg in icons/*.svg; do
-      name=$(basename "$svg" .svg)
-      install -Dm644 "$svg" "$out/share/icons/hicolor/scalable/apps/$name.svg"
-      for size in 16 22 24 32 48 64 128 256; do
-        mkdir -p "$out/share/icons/hicolor/''${size}x''${size}/apps"
-        rsvg-convert -w $size -h $size "$svg" -o "$out/share/icons/hicolor/''${size}x''${size}/apps/$name.png"
-      done
-    done
-    substituteInPlace $out/lib/proton-drive-sync/proton_drive_sync.py \
-      --replace-fail '__version__ = "@VERSION@"' "__version__ = \"$version\""
-
-    install -Dm644 /dev/stdin $out/share/applications/proton-drive-sync.desktop <<DESKTOP
-    [Desktop Entry]
-    Type=Application
-    Name=Proton Drive Sync
-    Comment=Ordner mit Proton Drive synchronisieren – Status und letzte Änderungen
-    Exec=$out/bin/proton-drive-sync status
-    Icon=proton-drive-sync
-    Terminal=false
-    Categories=Network;FileTransfer;
-    StartupWMClass=io.github.protondrivesync.Activity
-    Actions=settings;
-
-    [Desktop Action settings]
-    Name=Einstellungen
-    Exec=$out/bin/proton-drive-sync config
-    DESKTOP
+    install -Dm755 release/main $out/bin/proton-drive-sync
     runHook postInstall
   '';
 
-  postFixup = ''
-    makeWrapper ${python}/bin/python3 $out/bin/proton-drive-sync \
-      --add-flags "$out/lib/proton-drive-sync/proton_drive_sync.py" \
-      --suffix PATH : ${lib.makeBinPath [ protonDrive inotify-tools ]} \
-      "''${gappsWrapperArgs[@]}"
+  postInstall = ''
+    wrapProgram $out/bin/proton-drive-sync \
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ glib libsecret ]} \
+      --suffix PATH : ${lib.makeBinPath [ inotify-tools ]}
   '';
 
-  passthru.proton-drive = protonDrive;
+  # versionCheckHook of the base package expects `proton-drive --version`
+  doInstallCheck = false;
 
-  meta = {
-    description = "Two-way sync agent between local folders and Proton Drive";
-    mainProgram = "proton-drive-sync";
-    license = lib.licenses.mit;
+  meta = old.meta // {
+    description = "Two-way sync agent between local folders and Proton Drive (unofficial, uses the Proton Drive SDK)";
     homepage = "https://github.com/Memurame/protondrive-sync-nixos";
+    license = lib.licenses.mit;
+    mainProgram = "proton-drive-sync";
     platforms = lib.platforms.linux;
   };
-}
+})
