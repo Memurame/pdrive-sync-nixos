@@ -443,6 +443,8 @@ const ACTION_TEXT: Record<ActivityEvent['action'], string> = {
     down: '↓ heruntergeladen',
     del_local: '✕ lokal gelöscht ',
     del_remote: '✕ remote gelöscht',
+    mkdir_local: '+ Ordner lokal   ',
+    mkdir_remote: '+ Ordner remote  ',
     conflict: '! Konflikt       ',
     error: '✗ Fehler         ',
 };

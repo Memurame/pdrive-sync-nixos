@@ -16,7 +16,7 @@
 }:
 
 let
-  version = "0.7.0";
+  version = "0.7.1";
   channel = "beta";
 in
 proton-drive-cli.overrideAttrs (old: {

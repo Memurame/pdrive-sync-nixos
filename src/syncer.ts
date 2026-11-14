@@ -356,6 +356,7 @@ export class Syncer {
         log(`  mkdir remote  ${relDir}/`);
         const uid = await this.remote.mkdir(parentUid, baseName(relDir));
         this.remoteTree[relDir] = { uid, dir: true };
+        this.report('mkdir_remote', `${relDir}/`);
         return uid;
     }
 
@@ -415,7 +416,7 @@ export class Syncer {
         }
         await this.remote.trash(r.uid);
         removeSubtree(this.remoteTree, rel);
-        this.report('del_remote', rel, 'im Proton-Papierkorb');
+        this.report('del_remote', r.dir ? `${rel}/` : rel, 'im Proton-Papierkorb');
     }
 
     // ----------------------------------------------------------------------- //
@@ -439,7 +440,10 @@ export class Syncer {
                     if (oldDirs.has(rel) && !hasContent(rel)) {
                         log(`  rmdir local   ${rel}/`);
                         if (!this.opts.dryRun) {
-                            await rmdir(this.lpath(rel)).catch(() => this.trashLocal(rel));
+                            await rmdir(this.lpath(rel)).then(
+                                () => this.report('del_local', `${rel}/`, 'in Proton gelöscht'),
+                                () => this.trashLocal(rel), // still contains excluded files
+                            );
                         }
                     } else {
                         await this.ensureRemoteDir(rel);
@@ -452,6 +456,7 @@ export class Syncer {
                         log(`  mkdir local   ${rel}/`);
                         if (!this.opts.dryRun) {
                             await mkdir(this.lpath(rel), { recursive: true });
+                            this.report('mkdir_local', `${rel}/`);
                         }
                         result.add(rel);
                     }

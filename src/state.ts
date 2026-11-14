@@ -110,7 +110,7 @@ export interface StatusFile {
 export interface ActivityEvent {
     time: number;
     folder: string;
-    action: 'up' | 'down' | 'del_local' | 'del_remote' | 'conflict' | 'error';
+    action: 'up' | 'down' | 'del_local' | 'del_remote' | 'mkdir_local' | 'mkdir_remote' | 'conflict' | 'error';
     path: string;
     message?: string | null;
 }
